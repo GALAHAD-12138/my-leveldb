@@ -1209,7 +1209,9 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   w.done = false;
 
   MutexLock l(&mutex_);
+  // 多线程的write batch都被push到了writers_里面集体进行处理
   writers_.push_back(&w);
+  // 选一个leader一个处理writers_中的一个“小组”的write batch
   while (!w.done && &w != writers_.front()) {
     w.cv.Wait();
   }
@@ -1234,6 +1236,9 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
       mutex_.Unlock();
       status = log_->AddRecord(WriteBatchInternal::Contents(write_batch));
       bool sync_error = false;
+      // options.sync == true ，就是同步，代表现在就要将内容flush到磁盘上
+      // 一般都是异步是OS定期进行flush的
+      // 所以同步模式更慢
       if (status.ok() && options.sync) {
         status = logfile_->Sync();
         if (!status.ok()) {
@@ -1269,6 +1274,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
 
   // Notify new head of write queue
   if (!writers_.empty()) {
+    // writers_还有剩，就弄下一个组，唤醒下一个组的组长
     writers_.front()->cv.Signal();
   }
 
